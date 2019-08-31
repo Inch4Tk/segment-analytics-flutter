@@ -10,7 +10,13 @@ class Analytics {
   static Analytics _singleton;
   static String endpoint = "https://api.segment.io/v1";
   static String writeKey;
-  static AnalyticsClient client = new AnalyticsClient(new Client());
+  static AnalyticsClient client = AnalyticsClient(Client());
+
+  // Sessions
+  static DateTime _lastAction;
+  static List<String> _enableSessionsFor;
+  static Duration sessionTimeout;
+  static String sessionId;
 
   // Context infos
   static String osName;
@@ -18,6 +24,7 @@ class Analytics {
   static String deviceId;
   static String deviceManufacturer;
   static String deviceModel;
+  static String deviceType;
 
   static String appName;
   static String appVersion;
@@ -35,14 +42,18 @@ class Analytics {
       String appBuild,
       String screenWidth,
       String screenHeight,
-      String locale}) {
+      String locale,
+      List<String> enableSessionsFor = const ["Amplitude"],
+      Duration sessionTimeout = const Duration(minutes: 30)}) {
     Analytics.appName = appName;
     Analytics.appVersion = appVersion;
     Analytics.appBuild = appBuild;
     Analytics.screenWidth = screenWidth;
     Analytics.screenHeight = screenHeight;
     Analytics.locale = locale;
-    _singleton = new Analytics._internal(apiKey);
+    Analytics.sessionTimeout = sessionTimeout;
+    Analytics._enableSessionsFor = enableSessionsFor;
+    _singleton = Analytics._internal(apiKey);
     return _singleton;
   }
 
@@ -51,7 +62,7 @@ class Analytics {
       if (enabled) {
         print("Warning: Called Analytics without loading the library.");
       }
-      _singleton = new Analytics._internalNoWriteKey();
+      _singleton = Analytics._internalNoWriteKey();
       return _singleton;
     } else {
       return _singleton;
@@ -69,27 +80,30 @@ class Analytics {
     DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
     if (Platform.isAndroid) {
       AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      osName = androidInfo.version.baseOS;
-      osVersion = androidInfo.version.release;
+      osName = "Android";
+      osVersion =
+          "${androidInfo.version.release} (sdk: ${androidInfo.version.sdkInt})";
       deviceId = androidInfo.androidId;
       deviceManufacturer = androidInfo.manufacturer;
       deviceModel = androidInfo.model;
+      deviceType = "Android";
     } else {
       IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
-      osName = iosInfo.systemName;
+      osName = "iOS";
       osVersion = iosInfo.systemVersion;
       deviceId = iosInfo.identifierForVendor;
       deviceManufacturer = "Apple";
       deviceModel = iosInfo.model;
+      deviceType = "iOS";
     }
   }
 
-  void identify(String userID, {Map traits}) async {
+  Future<void> identify(String userID, {Map traits}) async {
     if (!enabled) {
       return;
     }
     if (traits == null) {
-      traits = new Map();
+      traits = Map();
     }
 
     Map payload = {
@@ -101,12 +115,12 @@ class Analytics {
         body: json.encode(payload));
   }
 
-  void group(String userID, String groupId, {Map traits}) async {
+  Future<void> group(String userID, String groupId, {Map traits}) async {
     if (!enabled) {
       return;
     }
     if (traits == null) {
-      traits = new Map();
+      traits = Map();
     }
 
     Map payload = {
@@ -124,7 +138,7 @@ class Analytics {
       return;
     }
     if (properties == null) {
-      properties = new Map();
+      properties = Map();
     }
 
     Map sendContext = await defaultContext();
@@ -134,19 +148,21 @@ class Analytics {
 
     Map payload = {
       "userId": userId,
-      "context": new Map.from(context),
+      "context": Map.from(sendContext),
       "name": name,
-      "properties": new Map.from(properties)
+      "properties": Map.from(properties)
     };
+    payload.addAll(defaultIntegrations());
     client.postSilentMicrotask("$endpoint/screen", body: json.encode(payload));
   }
 
-  void track(String userId, String event, {Map properties, Map context}) async {
+  Future<void> track(String userId, String event,
+      {Map properties, Map context}) async {
     if (!enabled) {
       return;
     }
     if (properties == null) {
-      properties = new Map();
+      properties = Map();
     }
 
     Map sendContext = await defaultContext();
@@ -156,10 +172,11 @@ class Analytics {
 
     Map payload = {
       "userId": userId,
-      "context": new Map.from(context),
+      "context": Map.from(sendContext),
       "event": event,
-      "properties": new Map.from(properties)
+      "properties": Map.from(properties)
     };
+    payload.addAll(defaultIntegrations());
     client.postSilentMicrotask("$endpoint/track", body: json.encode(payload));
   }
 
@@ -175,13 +192,15 @@ class Analytics {
       wifi = true;
     }
     final String timezone = DateTime.now().timeZoneName;
+
     return {
       "library": {"name": "analytics-flutter", "version": "1.0.0"},
       "app": {"name": appName, "version": appVersion, "build": appBuild},
       "device": {
         "id": deviceId,
         "manufacturer": deviceManufacturer,
-        "model": deviceModel
+        "model": deviceModel,
+        "type": deviceType
       },
       "network": {"cellular": mobile, "wifi": wifi},
       "screen": {"height": screenHeight, "width": screenWidth},
@@ -190,6 +209,30 @@ class Analytics {
       "timezone": timezone,
       "locale": locale
     };
+  }
+
+  Map defaultIntegrations() {
+    final Map<String, dynamic> integrations = Map();
+    for (final String integration in _enableSessionsFor) {
+      integrations[integration] = {"session_id": _getSessionId()};
+    }
+    return {"integrations": integrations};
+  }
+
+  String _getSessionId() {
+    bool newSession = false;
+    final now = DateTime.now();
+    if (Analytics._lastAction == null ||
+        now.difference(_lastAction) > sessionTimeout ||
+        sessionId == null) {
+      newSession = true;
+    }
+
+    if (newSession) {
+      sessionId = now.microsecondsSinceEpoch.toString();
+    }
+    _lastAction = now;
+    return sessionId;
   }
 }
 
