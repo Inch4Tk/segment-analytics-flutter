@@ -18,6 +18,9 @@ class Analytics {
   static String _userId;
   static Future<void> _loadingUser;
 
+  // Screen tracking specials
+  static bool _amplitudeScreenTracking;
+
   // Sessions
   static DateTime _lastAction;
   static List<String> _enableSessionsFor;
@@ -50,7 +53,8 @@ class Analytics {
       String screenHeight,
       String locale,
       List<String> enableSessionsFor = const ["Amplitude"],
-      Duration sessionTimeout = const Duration(minutes: 30)}) {
+      Duration sessionTimeout = const Duration(minutes: 30),
+      bool amplitudeScreenTracking = false}) {
     Analytics.appName = appName;
     Analytics.appVersion = appVersion;
     Analytics.appBuild = appBuild;
@@ -59,6 +63,7 @@ class Analytics {
     Analytics.locale = locale;
     Analytics.sessionTimeout = sessionTimeout;
     Analytics._enableSessionsFor = enableSessionsFor;
+    Analytics._amplitudeScreenTracking = amplitudeScreenTracking;
     _singleton = Analytics._internal(apiKey);
     return _singleton;
   }
@@ -182,7 +187,8 @@ class Analytics {
     client.postSilentMicrotask("$endpoint/group", body: json.encode(payload));
   }
 
-  Future<void> screen(String name, {Map properties, Map context}) async {
+  Future<void> screen(String name,
+      {Map properties, Map context, Map integrations}) async {
     if (!enabled) {
       return;
     }
@@ -197,6 +203,11 @@ class Analytics {
     Map sendContext = await defaultContext();
     if (context != null) {
       sendContext.addAll(context);
+    }
+
+    Map sendIntegrations = defaultIntegrations();
+    if (integrations != null) {
+      sendIntegrations.addAll(integrations);
     }
 
     Map payload = {
@@ -204,13 +215,28 @@ class Analytics {
       "anonymousId": _anonId,
       "context": Map.from(sendContext),
       "name": name,
-      "properties": Map.from(properties)
+      "properties": Map.from(properties),
+      "integrations": sendIntegrations
     };
     payload.addAll(defaultIntegrations());
     client.postSilentMicrotask("$endpoint/screen", body: json.encode(payload));
+
+    if (_amplitudeScreenTracking) {
+      final stIntegrations = defaultIntegrations();
+      // Currently when enabling this below, we don't send anything
+      // and there doesnt seem to be a way to keep amplitude
+      // enabled if we also want to send a sessionId
+      // stIntegrations["All"] = false;
+      if (!stIntegrations.containsKey("Amplitude")) {
+        stIntegrations["Amplitude"] = true;
+      }
+      await track("Loaded Screen",
+          properties: {"name": name}, integrations: stIntegrations);
+    }
   }
 
-  Future<void> track(String event, {Map properties, Map context}) async {
+  Future<void> track(String event,
+      {Map properties, Map context, Map integrations}) async {
     if (!enabled) {
       return;
     }
@@ -227,14 +253,19 @@ class Analytics {
       sendContext.addAll(context);
     }
 
+    Map sendIntegrations = defaultIntegrations();
+    if (integrations != null) {
+      sendIntegrations.addAll(integrations);
+    }
+
     Map payload = {
       "userId": _userId,
       "anonymousId": _anonId,
       "context": Map.from(sendContext),
       "event": event,
-      "properties": Map.from(properties)
+      "properties": Map.from(properties),
+      "integrations": sendIntegrations
     };
-    payload.addAll(defaultIntegrations());
     client.postSilentMicrotask("$endpoint/track", body: json.encode(payload));
   }
 
@@ -274,7 +305,7 @@ class Analytics {
     for (final String integration in _enableSessionsFor) {
       integrations[integration] = {"session_id": _getSessionId()};
     }
-    return {"integrations": integrations};
+    return integrations;
   }
 
   String _getSessionId() {
