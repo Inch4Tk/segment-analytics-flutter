@@ -4,6 +4,8 @@ import 'dart:convert' show utf8, base64, json, Encoding;
 import 'package:connectivity/connectivity.dart';
 import 'package:http/http.dart';
 import 'package:device_info/device_info.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 class Analytics {
   static bool enabled = true;
@@ -11,6 +13,10 @@ class Analytics {
   static String endpoint = "https://api.segment.io/v1";
   static String writeKey;
   static AnalyticsClient client = AnalyticsClient(Client());
+
+  static String _anonId;
+  static String _userId;
+  static Future<void> _loadingUser;
 
   // Sessions
   static DateTime _lastAction;
@@ -72,6 +78,7 @@ class Analytics {
   Analytics._internal(String segmentApiKey) {
     writeKey = "Basic ${base64.encode(utf8.encode(segmentApiKey)).toString()}";
     Analytics._loading = _loadDeviceInfos();
+    Analytics._loadingUser = _loadUserId();
   }
 
   Analytics._internalNoWriteKey();
@@ -98,45 +105,85 @@ class Analytics {
     }
   }
 
-  Future<void> identify(String userID, {Map traits}) async {
+  Future<void> _loadUserId() async {
+    final sharedPrefs = await SharedPreferences.getInstance();
+    Analytics._userId = sharedPrefs.getString("SegmentAnalyticsUserId");
+    Analytics._anonId = sharedPrefs.getString("SegmentAnalyticsAnonId");
+    if (Analytics._anonId == null) {
+      await _regenerateAnonId(sharedPrefs);
+    }
+  }
+
+  Future<void> _regenerateAnonId(SharedPreferences sharedPrefs) async {
+    if (sharedPrefs == null) {
+      sharedPrefs = await SharedPreferences.getInstance();
+    }
+    final uuid = Uuid();
+    Analytics._anonId = uuid.v4();
+    sharedPrefs.setString("SegmentAnalyticsAnonId", Analytics._anonId);
+  }
+
+  Future<void> _storeUserId(String userId) async {
+    Analytics._userId = userId;
+    final sharedPrefs = await SharedPreferences.getInstance();
+    sharedPrefs.setString("SegmentAnalyticsUserId", userId);
+  }
+
+  Future<void> reset() async {
+    Analytics._userId = null;
+    final sharedPrefs = await SharedPreferences.getInstance();
+    sharedPrefs.remove("SegmentAnalyticsUserId");
+    await _regenerateAnonId(sharedPrefs);
+  }
+
+  Future<void> identify(String userId, {Map traits}) async {
     if (!enabled) {
       return;
     }
+    await Analytics._loadingUser; // Always make sure the user was loaded
+
     if (traits == null) {
       traits = Map();
     }
 
+    await _storeUserId(userId);
+
     Map payload = {
       "traits": traits,
-      "userId": userID,
+      "userId": userId,
+      "anonymousId": _anonId,
       "context": await defaultContext()
     };
     client.postSilentMicrotask("$endpoint/identify",
         body: json.encode(payload));
   }
 
-  Future<void> group(String userID, String groupId, {Map traits}) async {
+  Future<void> group(String userId, String groupId, {Map traits}) async {
     if (!enabled) {
       return;
     }
+    await Analytics._loadingUser; // Always make sure the user was loaded
+
     if (traits == null) {
       traits = Map();
     }
 
     Map payload = {
       "traits": traits,
-      "userId": userID,
+      "userId": userId,
       "groupId": groupId,
+      "anonymousId": _anonId,
       "context": await defaultContext()
     };
     client.postSilentMicrotask("$endpoint/group", body: json.encode(payload));
   }
 
-  Future<void> screen(String userId, String name,
-      {Map properties, Map context}) async {
+  Future<void> screen(String name, {Map properties, Map context}) async {
     if (!enabled) {
       return;
     }
+    await Analytics._loadingUser; // Always make sure the user was loaded
+
     if (properties == null) {
       properties = Map();
     }
@@ -147,7 +194,8 @@ class Analytics {
     }
 
     Map payload = {
-      "userId": userId,
+      "userId": _userId,
+      "anonymousId": _anonId,
       "context": Map.from(sendContext),
       "name": name,
       "properties": Map.from(properties)
@@ -156,11 +204,12 @@ class Analytics {
     client.postSilentMicrotask("$endpoint/screen", body: json.encode(payload));
   }
 
-  Future<void> track(String userId, String event,
-      {Map properties, Map context}) async {
+  Future<void> track(String event, {Map properties, Map context}) async {
     if (!enabled) {
       return;
     }
+    await Analytics._loadingUser; // Always make sure the user was loaded
+
     if (properties == null) {
       properties = Map();
     }
@@ -171,7 +220,8 @@ class Analytics {
     }
 
     Map payload = {
-      "userId": userId,
+      "userId": _userId,
+      "anonymousId": _anonId,
       "context": Map.from(sendContext),
       "event": event,
       "properties": Map.from(properties)
