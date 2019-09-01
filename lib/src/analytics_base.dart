@@ -140,7 +140,9 @@ class Analytics {
     if (!enabled) {
       return;
     }
-    await Analytics._loadingUser; // Always make sure the user was loaded
+    // Make sure everything is fully loaded;
+    await Analytics._loading;
+    await Analytics._loadingUser;
 
     if (traits == null) {
       traits = Map();
@@ -162,7 +164,9 @@ class Analytics {
     if (!enabled) {
       return;
     }
-    await Analytics._loadingUser; // Always make sure the user was loaded
+    // Make sure everything is fully loaded;
+    await Analytics._loading;
+    await Analytics._loadingUser;
 
     if (traits == null) {
       traits = Map();
@@ -182,7 +186,9 @@ class Analytics {
     if (!enabled) {
       return;
     }
-    await Analytics._loadingUser; // Always make sure the user was loaded
+    // Make sure everything is fully loaded;
+    await Analytics._loading;
+    await Analytics._loadingUser;
 
     if (properties == null) {
       properties = Map();
@@ -208,7 +214,9 @@ class Analytics {
     if (!enabled) {
       return;
     }
-    await Analytics._loadingUser; // Always make sure the user was loaded
+    // Make sure everything is fully loaded;
+    await Analytics._loading;
+    await Analytics._loadingUser;
 
     if (properties == null) {
       properties = Map();
@@ -304,8 +312,6 @@ class AnalyticsClient extends BaseClient {
       print("Warning: Library was not loaded or no write key was supplied.");
       return;
     }
-    // Make sure everything is fully loaded;
-    await Analytics._loading;
 
     scheduleMicrotask(() async {
       await this.post(url, headers: headers, body: body, encoding: encoding);
